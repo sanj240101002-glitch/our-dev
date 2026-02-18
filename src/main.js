@@ -4,6 +4,7 @@ import gsap from "https://cdn.jsdelivr.net/npm/gsap@3.12.5/+esm";
 import { ScrollTrigger } from "https://cdn.jsdelivr.net/npm/gsap@3.12.5/ScrollTrigger/+esm";
 
 gsap.registerPlugin(ScrollTrigger);
+
 // Improve mobile scroll behavior
 ScrollTrigger.config({
   ignoreMobileResize: true
@@ -37,6 +38,10 @@ const boxInset = 0.65;
 const cameraHeight = 0.6;
 const lookAheadDistance = 1.5;
 
+// Define Z-depths for scrolling logic
+const startZ = 2; // Original front position
+const deepZ = isMobile ? -75 : -95; // Original back position
+
 // ==========================
 // SCENE SETUP
 // ==========================
@@ -52,10 +57,9 @@ const camera = new THREE.PerspectiveCamera(
   1000
 );
 
-camera.position.set(0, cameraHeight, 2);
-
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
+
 function getViewportSize() {
   const width = window.visualViewport
     ? window.visualViewport.width
@@ -91,10 +95,27 @@ function getWaveX(z) {
 }
 
 // ==========================
+// INITIAL CAMERA POSITIONING
+// ==========================
+
+// 1. Set Z to the "Deep" end (Back of the tunnel)
+camera.position.set(0, cameraHeight, deepZ);
+
+// 2. Set X immediately so we are on the wave path (prevents jumping on first frame)
+camera.position.x = getWaveX(deepZ);
+
+// 3. Look at the "next" point in the tunnel
+const initialLookZ = deepZ - lookAheadDistance;
+const initialLookX = getWaveX(deepZ); 
+camera.lookAt(initialLookX, cameraHeight, initialLookZ);
+
+
+// ==========================
 // SVG LOADING
 // ==========================
 
 const textureLoader = new THREE.TextureLoader();
+// Ensure this path matches your file structure
 const svgTexture = textureLoader.load('./public/models/snowman.png');
 
 const svgMaterial = new THREE.MeshBasicMaterial({
@@ -132,68 +153,57 @@ function createNameTag(text) {
   const geometry = new THREE.PlaneGeometry(3, 1.5);
   const mesh = new THREE.Mesh(geometry, material);
   mesh.scale.set(0.6, 0.6, 0.6);
-  mesh.position.set()
 
   return mesh;
 }
 
 // ==========================
-// BOX CREATION (SINGLE WAVE)
+// BOX CREATION
 // ==========================
-
-const characters = [];
 
 function createWave() {
 
   for (let n = 0; n < boxCount; n++) {
 
-    const baseZ = -(Math.PI/2 + n * Math.PI) / (frequency * 0.1 * waveStretch);
+    const baseZ = -(Math.PI / 2 + n * Math.PI) / (frequency * 0.1 * waveStretch);
     const z = baseZ * boxSpacingMultiplier;
 
     const x = getWaveX(z) * boxInset;
 
     const mesh = new THREE.Mesh(svgGeometry, svgMaterial);
-    
-    
 
     // Create name
     const nameTag = createNameTag(`BOX ${n + 1}`);
 
     const isRightBox = x > 0;
 
-if (isMobile) {
+    if (isMobile) {
+      // 📱 Mobile placement
+      mesh.position.set(
+        isRightBox ? x + 0.2 : x - 0.2,
+        cameraHeight,
+        z
+      );
+      nameTag.position.set(
+        isRightBox ? x + 0.2 : x - 0.2,
+        cameraHeight - 1.5,
+        z
+      );
 
-  // 📱 Mobile & Tablet → place below character
-  mesh.position.set(
-    // x-0.2,
-    isRightBox ? x + 0.2 : x - 0.2,
-    cameraHeight,
-    z
-  )
-  nameTag.position.set(
-    isRightBox ? x + 0.2 : x-0.2,                      // align with character center
-    cameraHeight - 1.5,     // below character
-    z
-  );
-
-} else {
-
-  // 🖥 Desktop → keep your original side logic
-  const isRightBox = x > 0;
-
-  nameTag.position.set(
-    isRightBox ? 1 + nameSideOffset : nameSideOffset - 7,
-    cameraHeight,
-    z
-  );
-  mesh.position.set(x, cameraHeight , z);
-}
+    } else {
+      // 🖥 Desktop placement
+      nameTag.position.set(
+        isRightBox ? 1 + nameSideOffset : nameSideOffset - 7,
+        cameraHeight,
+        z
+      );
+      mesh.position.set(x, cameraHeight, z);
+    }
 
     scene.add(mesh);
     scene.add(nameTag);
   }
 }
-
 
 createWave();
 
@@ -201,14 +211,12 @@ createWave();
 // SCROLL CAMERA
 // ==========================
 
-const endZ = isMobile ? -75 : -95;
-
-
+// Animate FROM deepZ (current pos) TO startZ (2)
 gsap.to(camera.position, {
-  z: endZ,
+  z: startZ, // Target is now the front
   ease: "none",
   scrollTrigger: {
-    trigger: "#scrollArea",
+    trigger: "#scrollArea", // Ensure this ID exists in your HTML
     start: "top top",
     end: "bottom bottom",
     scrub: isMobile ? 1.5 : 1,
@@ -222,13 +230,14 @@ gsap.to(camera.position, {
     const targetTilt = -camera.position.x * 0.15;
     camera.rotation.z += (targetTilt - camera.rotation.z) * 0.08;
 
+    // Look logic: we still look slightly "deeper" than our current Z
+    // to maintain the tunnel vision effect
     const lookZ = camera.position.z - lookAheadDistance;
-    const lookX = getWaveX(camera.position.z);
+    const lookX = getWaveX(camera.position.z); // Look at center of wave path
     camera.lookAt(lookX, cameraHeight, lookZ);
 
-    // Box trigger logic
-
-
+    // Debugging position if needed
+    // console.log('camera z:', camera.position.z);
   }
 });
 
@@ -240,8 +249,6 @@ gsap.to(camera.position, {
 function animate() {
   requestAnimationFrame(animate);
   renderer.render(scene, camera);
-  if(camera.position.z )
-  console.log('camera pos',camera.position.z);
 }
 animate();
 
@@ -267,4 +274,3 @@ window.addEventListener("resize", handleResize);
 if (window.visualViewport) {
   window.visualViewport.addEventListener("resize", handleResize);
 }
-//-6 -24 -4  -58 -75
