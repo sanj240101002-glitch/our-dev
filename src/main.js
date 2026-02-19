@@ -9,7 +9,7 @@ import { UnrealBloomPass } from 'https://cdn.jsdelivr.net/npm/three@0.158.0/exam
 gsap.registerPlugin(ScrollTrigger);
 
 ScrollTrigger.config({ ignoreMobileResize: true });
-ScrollTrigger.normalizeScroll(true);
+// ScrollTrigger.normalizeScroll(true); // MUST BE COMMENTED OUT FOR MOBILE SNAPPING TO WORK
 
 // ==========================
 // CONFIGURATION
@@ -33,15 +33,20 @@ const deepZ = isMobile ? -75 : -95;
 
 // Global animation variables
 let particleSystem;
+const floatingSymbols = []; 
 const clock = new THREE.Clock();
 
 // ==========================
-// SCENE SETUP
+// SCENE SETUP (TWO SCENES FOR SELECTIVE GLOW)
 // ==========================
 
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x000005); 
-scene.fog = new THREE.FogExp2(0x000005, 0.03); 
+// 1. Scene for objects that glow (Tubes, Particles, Symbols)
+const glowScene = new THREE.Scene();
+glowScene.background = new THREE.Color(0x000005); 
+glowScene.fog = new THREE.FogExp2(0x000005, 0.03); 
+
+// 2. Scene for objects that don't glow (Snowmen, Nametags)
+const nonGlowScene = new THREE.Scene();
 
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 
@@ -49,6 +54,9 @@ const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
 renderer.toneMapping = THREE.ReinhardToneMapping;
 renderer.toneMappingExposure = 1.5; 
+
+// IMPORTANT: Tell the renderer not to automatically erase the screen between renders
+renderer.autoClear = false; 
 
 function getViewportSize() {
   const width = window.visualViewport ? window.visualViewport.width : window.innerWidth;
@@ -63,17 +71,17 @@ camera.updateProjectionMatrix();
 
 document.body.appendChild(renderer.domElement);
 
-// --- POST-PROCESSING (NEON GLOW) ---
-const renderScene = new RenderPass(scene, camera);
+// --- POST-PROCESSING ---
 
-// Resolution, strength, radius, threshold
+// Only put the glowing scene into the composer
+const renderGlowPass = new RenderPass(glowScene, camera);
 const bloomPass = new UnrealBloomPass(new THREE.Vector2(width, height), 1.5, 0.4, 0.85);
-bloomPass.threshold = 0.15;
-bloomPass.strength = 1.5; // High strength for neon look
+bloomPass.threshold = 0.08;
+bloomPass.strength = 0.5; 
 bloomPass.radius = 0.5;
 
 const composer = new EffectComposer(renderer);
-composer.addPass(renderScene);
+composer.addPass(renderGlowPass);
 composer.addPass(bloomPass);
 
 // ==========================
@@ -92,19 +100,14 @@ function getWaveX(z) {
 function generateGradientTexture() {
   const canvas = document.createElement('canvas');
   canvas.width = 32;
-  canvas.height = 64; // Vertical gradient
+  canvas.height = 64; 
   const ctx = canvas.getContext('2d');
 
-  // Gradient runs along the length of the tube
   const gradient = ctx.createLinearGradient(0, 0, 0, 64);
-  
-  // 1. Fade In (Transparent)
   gradient.addColorStop(0, 'rgba(0, 255, 255, 0)');
-  // 2. Bright Core (Cyan)
   gradient.addColorStop(0.2, 'rgba(0, 255, 255, 0.5)');
-  gradient.addColorStop(0.5, 'rgba(255, 255, 255, 1)'); // White hot center
+  gradient.addColorStop(0.5, 'rgba(255, 255, 255, 1)'); 
   gradient.addColorStop(0.8, 'rgba(0, 255, 255, 0.5)');
-  // 3. Fade Out (Transparent)
   gradient.addColorStop(1, 'rgba(0, 255, 255, 0)');
 
   ctx.fillStyle = gradient;
@@ -112,29 +115,26 @@ function generateGradientTexture() {
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.wrapS = THREE.RepeatWrapping;
-  texture.wrapT = THREE.RepeatWrapping; // Allows gradient to repeat if needed
+  texture.wrapT = THREE.RepeatWrapping; 
   return texture;
 }
 
 // ==========================
-// VISUAL EFFECTS (UPDATED)
+// VISUAL EFFECTS
 // ==========================
 
 function createTunnelVisuals() {
-  
-  // --- 1. THICK GLOWING TUBES (STATIC) ---
   const lineCount = 10; 
   const pointsPerLine = 60;
   const gradientTexture = generateGradientTexture();
 
-  // Material for the tubes
   const tubeMaterial = new THREE.MeshBasicMaterial({
     map: gradientTexture,
     transparent: true,
     opacity: 0.8,
     blending: THREE.AdditiveBlending,
     side: THREE.DoubleSide,
-    depthWrite: false // Helps with transparency overlapping
+    depthWrite: false
   });
 
   for (let i = 0; i < lineCount; i++) {
@@ -142,7 +142,6 @@ function createTunnelVisuals() {
     const offsetX = (Math.random() - 0.5) * 14; 
     const offsetY = (Math.random() - 0.5) * 8 + cameraHeight;
 
-    // Generate path points
     for (let j = 0; j <= pointsPerLine; j++) {
       const ratio = j / pointsPerLine;
       const z = deepZ + (ratio * (Math.abs(deepZ - startZ) + 30)) - 10; 
@@ -150,26 +149,12 @@ function createTunnelVisuals() {
       points.push(new THREE.Vector3(x, offsetY, z));
     }
 
-    // Create a smooth curve from points
     const curve = new THREE.CatmullRomCurve3(points);
-    
-    // Create Tube Geometry (path, segments, radius, radialSegments, closed)
-    // Radius 0.04 gives it thickness
     const geometry = new THREE.TubeGeometry(curve, 100, 0.04, 8, false);
-    
-    // Adjust UVs to map gradient along the length correctly
-    // By default Tube maps U around, V along length. We want gradient along V.
-    const uvAttribute = geometry.attributes.uv;
-    for (let k = 0; k < uvAttribute.count; k++) {
-        // Scale UVs if necessary to repeat the gradient or stretch it
-        // uvAttribute.setY(k, uvAttribute.getY(k) * 1); 
-    }
-    
     const mesh = new THREE.Mesh(geometry, tubeMaterial);
-    scene.add(mesh);
+    glowScene.add(mesh); 
   }
 
-  // --- 2. FLOATING PARTICLES (MOVING) ---
   const particleCount = 800;
   const particleGeo = new THREE.BufferGeometry();
   const particlePos = [];
@@ -204,10 +189,87 @@ function createTunnelVisuals() {
   });
 
   particleSystem = new THREE.Points(particleGeo, particleMat);
-  scene.add(particleSystem);
+  glowScene.add(particleSystem); 
+}
+
+// ==========================
+// DEVELOPER SYNTAX / MATH SYMBOLS 
+// ==========================
+
+function createFloatingSymbols() {
+  const chars = [
+    '{', '</>', '=>', '||', '&&', '!=', '===', '();', '[]', '==','0','1', ';', '//', '/*',
+    '∑', '∫', 'π', '∞', 'λ', 'Δ', 'Ω', 'θ', '√', '≈', '≠',
+    '404', '!', 'X', 'null'
+  ];
+  
+  const baseColors = ['#00ffff', '#00aaff', '#ff0000', '#00ff88'];
+
+  const materials = chars.flatMap(char => {
+    return baseColors.map(colorHex => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 128;
+      canvas.height = 128;
+      const ctx = canvas.getContext('2d');
+      
+      ctx.shadowColor = colorHex;
+      ctx.shadowBlur = 4; 
+      ctx.fillStyle = colorHex;
+      
+      ctx.font = 'bold 50px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      
+      ctx.fillText(char, 64, 64);
+      
+      const texture = new THREE.CanvasTexture(canvas);
+      
+      const material = new THREE.SpriteMaterial({ 
+        map: texture, 
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        opacity: 0.9,
+        depthWrite: false
+      });
+      
+      material.color.set(colorHex);
+
+      return material;
+    });
+  });
+
+  const symbolCount = 55; 
+
+  for (let i = 0; i < symbolCount; i++) {
+    const randomMaterial = materials[Math.floor(Math.random() * materials.length)];
+    const sprite = new THREE.Sprite(randomMaterial);
+    
+    const z = deepZ + Math.random() * (Math.abs(deepZ - startZ) + 20) - 10;
+    const spreadX = (Math.random() - 0.5) * 20; 
+    const x = getWaveX(z) + spreadX;
+    const y = (Math.random() - 0.5) * 14 + cameraHeight;
+    
+    sprite.position.set(x, y, z);
+    
+    const scale = 0.5 + Math.random() * 0.7; 
+    sprite.scale.set(scale, scale, scale);
+    
+    sprite.userData = {
+       baseX: spreadX,
+       baseY: y,
+       speedX: (Math.random() - 0.5) * 0.15, 
+       speedY: (Math.random() - 0.5) * 0.15,
+       phase: Math.random() * Math.PI * 2,
+       zSpeed: Math.random() * 0.02 + 0.005 
+    };
+    
+    glowScene.add(sprite); 
+    floatingSymbols.push(sprite);
+  }
 }
 
 createTunnelVisuals();
+createFloatingSymbols();
 
 // ==========================
 // INITIAL CAMERA & ASSETS
@@ -215,7 +277,6 @@ createTunnelVisuals();
 
 camera.position.set(getWaveX(deepZ), cameraHeight, deepZ);
 camera.lookAt(getWaveX(deepZ), cameraHeight, deepZ - lookAheadDistance);
-
 
 const textureLoader = new THREE.TextureLoader();
 const svgTexture = textureLoader.load('./public/models/snowman.png');
@@ -236,6 +297,10 @@ function createNameTag(text) {
   return mesh;
 }
 
+// ==========================
+// WAVE FUNCTION (SNOWMEN) 
+// ==========================
+
 function createWave() {
   for (let n = 0; n < boxCount; n++) {
     const baseZ = -(Math.PI / 2 + n * Math.PI) / (frequency * 0.1 * waveStretch);
@@ -252,15 +317,33 @@ function createWave() {
       nameTag.position.set(isRightBox ? 1 + nameSideOffset : nameSideOffset - 7, cameraHeight, z);
       mesh.position.set(x, cameraHeight, z);
     }
-    scene.add(mesh);
-    scene.add(nameTag);
+    nonGlowScene.add(mesh);
+    nonGlowScene.add(nameTag);
   }
 }
 createWave();
 
 // ==========================
-// SCROLL ANIMATION
+// SCROLL ANIMATION (MOBILE-OPTIMIZED SNAPPING)
 // ==========================
+
+const snapPoints = [];
+const totalPathZ = startZ - deepZ; 
+// Bring camera slightly closer on mobile so it doesn't overshoot the view
+const viewOffsetZ = isMobile ? 4.5 : 6; 
+
+for (let n = 0; n < boxCount; n++) {
+  const baseZ = -(Math.PI / 2 + n * Math.PI) / (frequency * 0.1 * waveStretch);
+  const boxZ = baseZ * boxSpacingMultiplier;
+  const targetCameraZ = boxZ + viewOffsetZ;
+  const progress = (targetCameraZ - deepZ) / totalPathZ;
+  
+  if (progress >= 0 && progress <= 1) {
+      snapPoints.push(progress);
+  }
+}
+
+snapPoints.sort((a, b) => a - b);
 
 gsap.to(camera.position, {
   z: startZ,
@@ -269,7 +352,13 @@ gsap.to(camera.position, {
     trigger: "#scrollArea",
     start: "top top",
     end: "bottom bottom",
-    scrub: isMobile ? 1.5 : 1,
+    scrub: isMobile ? 0.5 : 1, // Lowered scrub for mobile.
+    snap: {
+      snapTo: snapPoints,
+      duration: { min: 0.2, max: 0.6 }, // Faster snapping duration
+      delay: 0.05, // Snaps quickly after scroll stops
+      ease: "power1.inOut"
+    }
   },
   onUpdate: () => {
     camera.position.x = getWaveX(camera.position.z);
@@ -291,7 +380,6 @@ function animate() {
   
   const time = clock.getElapsedTime();
 
-  // --- Animate Particles (Lines are skipped so they stay static) ---
   if (particleSystem) {
     const positions = particleSystem.geometry.attributes.position.array;
     const data = particleSystem.geometry.userData.animationData;
@@ -303,7 +391,6 @@ function animate() {
       
       const waveCenterX = getWaveX(z);
       
-      // Particles still wander organically
       const wanderX = Math.sin(time * particleData.speedX + particleData.phase) * 0.5;
       const wanderY = Math.cos(time * particleData.speedY + particleData.phase) * 0.5;
 
@@ -313,8 +400,35 @@ function animate() {
     particleSystem.geometry.attributes.position.needsUpdate = true;
   }
 
-  // Use composer for bloom
+  floatingSymbols.forEach(sprite => {
+    const waveCenterX = getWaveX(sprite.position.z);
+    
+    const wanderX = Math.sin(time * sprite.userData.speedX + sprite.userData.phase) * 0.3;
+    const wanderY = Math.cos(time * sprite.userData.speedY + sprite.userData.phase) * 0.3;
+    
+    sprite.position.x = waveCenterX + sprite.userData.baseX + wanderX;
+    sprite.position.y = sprite.userData.baseY + wanderY;
+
+    sprite.position.z += sprite.userData.zSpeed;
+
+    if (sprite.position.z > startZ + 5) {
+      sprite.position.z = deepZ - 10;
+    }
+  });
+
+  // --- RENDERING SEQUENCE ---
+  
+  // 1. Clear everything manually
+  renderer.clear();
+  
+  // 2. Render the glowing scene (Tubes, Particles, Syntax) through the Bloom Pass onto the screen
   composer.render();
+  
+  // 3. Clear the depth buffer. This ensures our snowmen render perfectly on top of the glowing background.
+  renderer.clearDepth();
+  
+  // 4. Render the snowmen directly to the screen WITHOUT Bloom over what's already there
+  renderer.render(nonGlowScene, camera);
 }
 animate();
 
