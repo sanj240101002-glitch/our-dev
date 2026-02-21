@@ -5,6 +5,9 @@ import { ScrollTrigger } from "https://cdn.jsdelivr.net/npm/gsap@3.12.5/ScrollTr
 import { EffectComposer } from 'https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { ShaderPass } from 'https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/postprocessing/ShaderPass.js';
+import { HorizontalBlurShader } from 'https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/shaders/HorizontalBlurShader.js';
+import { VerticalBlurShader } from 'https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/shaders/VerticalBlurShader.js';
 
 gsap.registerPlugin(ScrollTrigger);
 
@@ -31,9 +34,21 @@ const lookAheadDistance = 1.5;
 const startZ = 2; 
 const deepZ = isMobile ? -75 : -95;
 
+// Positioning and sizing constants for character and text
+const viewOffsetZ = isMobile ? 4.5 : 6; 
+
+// --- UPDATED OFFSETS ---
+// Pushed character further out, brought text closer in
+const charXOffset = isMobile ? 3.5 : 7.0; 
+const textXOffset = isMobile ? 0.8 : 1.0; 
+
+// Height of the character
+const characterHeight = isMobile ? 7.5 : 10.5; 
+
 // Global animation variables
 let particleSystem;
 const floatingSymbols = []; 
+const uiElements = []; // Tracks character and text panels to keep them upright
 const clock = new THREE.Clock();
 
 // ==========================
@@ -47,6 +62,7 @@ glowScene.fog = new THREE.FogExp2(0x000005, 0.03);
 
 // 2. Scene for objects that don't glow (Snowmen, Nametags)
 const nonGlowScene = new THREE.Scene();
+nonGlowScene.fog = new THREE.FogExp2(0x000005, 0.045); 
 
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 
@@ -73,16 +89,24 @@ document.body.appendChild(renderer.domElement);
 
 // --- POST-PROCESSING ---
 
-// Only put the glowing scene into the composer
 const renderGlowPass = new RenderPass(glowScene, camera);
 const bloomPass = new UnrealBloomPass(new THREE.Vector2(width, height), 1.5, 0.4, 0.85);
 bloomPass.threshold = 0.08;
 bloomPass.strength = 0.5; 
 bloomPass.radius = 0.5;
 
+const hBlurPass = new ShaderPass(HorizontalBlurShader);
+const vBlurPass = new ShaderPass(VerticalBlurShader);
+
+const blurAmount = 3.0; 
+hBlurPass.uniforms.h.value = blurAmount / width;
+vBlurPass.uniforms.v.value = blurAmount / height;
+
 const composer = new EffectComposer(renderer);
 composer.addPass(renderGlowPass);
 composer.addPass(bloomPass);
+composer.addPass(hBlurPass); 
+composer.addPass(vBlurPass); 
 
 // ==========================
 // WAVE FUNCTION
@@ -216,7 +240,7 @@ function createFloatingSymbols() {
       ctx.shadowBlur = 4; 
       ctx.fillStyle = colorHex;
       
-      ctx.font = 'bold 50px monospace';
+      ctx.font = 'bold 100px monospace';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       
@@ -278,50 +302,99 @@ createFloatingSymbols();
 camera.position.set(getWaveX(deepZ), cameraHeight, deepZ);
 camera.lookAt(getWaveX(deepZ), cameraHeight, deepZ - lookAheadDistance);
 
-const textureLoader = new THREE.TextureLoader();
-const svgTexture = textureLoader.load('./public/models/snowman.png');
-const svgMaterial = new THREE.MeshBasicMaterial({ map: svgTexture, transparent: true });
-const svgGeometry = new THREE.PlaneGeometry(2, 2);
-
-function createNameTag(text) {
+// Info panel generator function
+function createInfoPanel(title, infoLines) {
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
-  canvas.width = 512; canvas.height = 256;
-  ctx.fillStyle = "white"; ctx.font = "bold 80px Arial";
-  ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+  canvas.width = 1024; canvas.height = 1024;
+  
+  // Title
+  ctx.fillStyle = "#00ffff"; 
+  ctx.font = "bold 90px sans-serif";
+  ctx.textBaseline = "top";
+  ctx.fillText(title, 40, 80);
+  
+  // Underline
+  ctx.fillRect(40, 190, 400, 8);
+
+  // Body Text
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "50px monospace";
+  infoLines.forEach((line, index) => {
+    ctx.fillText(line, 40, 260 + (index * 80));
+  });
+
   const texture = new THREE.CanvasTexture(canvas);
+  texture.anisotropy = renderer.capabilities.getMaxAnisotropy(); 
+  
   const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true });
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(3, 1.5), material);
-  mesh.scale.set(0.6, 0.6, 0.6);
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(5, 5), material);
+  
   return mesh;
 }
 
 // ==========================
-// WAVE FUNCTION (SNOWMEN) 
+// WAVE FUNCTION & IMAGE LOADING 
 // ==========================
 
-function createWave() {
-  for (let n = 0; n < boxCount; n++) {
-    const baseZ = -(Math.PI / 2 + n * Math.PI) / (frequency * 0.1 * waveStretch);
-    const z = baseZ * boxSpacingMultiplier;
-    const x = getWaveX(z) * boxInset;
-    const mesh = new THREE.Mesh(svgGeometry, svgMaterial);
-    const nameTag = createNameTag(`BOX ${n + 1}`);
-    const isRightBox = x > 0;
+const textureLoader = new THREE.TextureLoader();
 
-    if (isMobile) {
-      mesh.position.set(isRightBox ? x + 0.2 : x - 0.2, cameraHeight, z);
-      nameTag.position.set(isRightBox ? x + 0.2 : x - 0.2, cameraHeight - 1.5, z);
-    } else {
-      nameTag.position.set(isRightBox ? 1 + nameSideOffset : nameSideOffset - 7, cameraHeight, z);
-      mesh.position.set(x, cameraHeight, z);
+textureLoader.load(
+  './public/models/aryannobg1.png',
+  function (svgTexture) {
+    svgTexture.colorSpace = THREE.SRGBColorSpace;
+    svgTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    svgTexture.minFilter = THREE.LinearMipmapLinearFilter;
+    svgTexture.magFilter = THREE.LinearFilter;
+
+    const svgMaterial = new THREE.MeshBasicMaterial({ 
+      map: svgTexture, 
+      transparent: true, 
+      toneMapped: false, 
+      alphaTest: 0.1     
+    });
+
+    const imageWidth = svgTexture.image.width;
+    const imageHeight = svgTexture.image.height;
+    const aspectRatio = imageWidth / imageHeight;
+
+    const calculatedWidth = characterHeight * aspectRatio;
+    const svgGeometry = new THREE.PlaneGeometry(calculatedWidth, characterHeight);
+
+    for (let n = 0; n < boxCount; n++) {
+      const baseZ = -(Math.PI / 2 + n * Math.PI) / (frequency * 0.1 * waveStretch);
+      const z = baseZ * boxSpacingMultiplier;
+      const waveCenter = getWaveX(z);
+      
+      const mesh = new THREE.Mesh(svgGeometry, svgMaterial);
+      
+      const infoText = [
+        "ROLE: Creative Developer",
+        "SKILLS: Three.js, GSAP, React",
+        "STATUS: Building the Web",
+        `EXP LEVEL: ${n + 1}000`
+      ];
+      const infoPanel = createInfoPanel(`PROFILE ${n + 1}`, infoText);
+
+      // --- ALTERNATING SIDES LOGIC ---
+      const isEven = n % 2 === 0;
+      
+      // Apply the newly adjusted separated offsets here
+      const charX = waveCenter + (isEven ? -charXOffset : charXOffset);
+      const textX = waveCenter + (isEven ? textXOffset : -textXOffset);
+
+      // Position them flat. Removing lookAt forces them perfectly parallel to the screen.
+      mesh.position.set(charX, cameraHeight, z);
+      infoPanel.position.set(textX, cameraHeight + 1.5, z); 
+
+      nonGlowScene.add(mesh);
+      nonGlowScene.add(infoPanel);
+      
+      // Store them to keep them perfectly upright during camera tilt
+      uiElements.push(mesh, infoPanel);
     }
-    nonGlowScene.add(mesh);
-    nonGlowScene.add(nameTag);
   }
-}
-createWave();
+);
 
 // ==========================
 // SCROLL ANIMATION (MOBILE-OPTIMIZED SNAPPING)
@@ -329,8 +402,6 @@ createWave();
 
 const snapPoints = [];
 const totalPathZ = startZ - deepZ; 
-// Bring camera slightly closer on mobile so it doesn't overshoot the view
-const viewOffsetZ = isMobile ? 4.5 : 6; 
 
 for (let n = 0; n < boxCount; n++) {
   const baseZ = -(Math.PI / 2 + n * Math.PI) / (frequency * 0.1 * waveStretch);
@@ -352,11 +423,11 @@ gsap.to(camera.position, {
     trigger: "#scrollArea",
     start: "top top",
     end: "bottom bottom",
-    scrub: isMobile ? 0.5 : 1, // Lowered scrub for mobile.
+    scrub: isMobile ? 0.5 : 1, 
     snap: {
       snapTo: snapPoints,
-      duration: { min: 0.2, max: 0.6 }, // Faster snapping duration
-      delay: 0.05, // Snaps quickly after scroll stops
+      duration: { min: 0.2, max: 0.6 }, 
+      delay: 0.05, 
       ease: "power1.inOut"
     }
   },
@@ -416,18 +487,16 @@ function animate() {
     }
   });
 
+  // Keep planes perfectly upright and parallel to the screen 
+  // by matching the camera's Z-tilt dynamically.
+  uiElements.forEach(el => {
+    el.rotation.z = camera.rotation.z;
+  });
+
   // --- RENDERING SEQUENCE ---
-  
-  // 1. Clear everything manually
   renderer.clear();
-  
-  // 2. Render the glowing scene (Tubes, Particles, Syntax) through the Bloom Pass onto the screen
   composer.render();
-  
-  // 3. Clear the depth buffer. This ensures our snowmen render perfectly on top of the glowing background.
   renderer.clearDepth();
-  
-  // 4. Render the snowmen directly to the screen WITHOUT Bloom over what's already there
   renderer.render(nonGlowScene, camera);
 }
 animate();
@@ -443,6 +512,10 @@ function handleResize() {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
   renderer.setSize(width, height);
   composer.setSize(width, height); 
+  
+  hBlurPass.uniforms.h.value = blurAmount / width;
+  vBlurPass.uniforms.v.value = blurAmount / height;
+
   ScrollTrigger.refresh();
 }
 
