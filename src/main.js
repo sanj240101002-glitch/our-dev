@@ -540,42 +540,157 @@ if (window.visualViewport) {
   window.visualViewport.addEventListener("resize", handleResize);
 }
 
+/* ============================================================
+   NON-DESTRUCTIVE RESPONSIVE FIX (APPEND ONLY)
+   ============================================================ */
 
-//offsetvalue
-// X= 1.7483819715837419 Y= -0.2537957758028814
-// main.js:168 X= 0.37615036034312466 Y= 2.938568163765949
-// main.js:168 X= 4.547051525102319 Y= 3.3807998003225275
-// main.js:168 X= -2.67575738441814 Y= -0.2148295497078211
-// main.js:168 X= -3.6508671319680905 Y= 3.275843443981629
-// main.js:168 X= 5.152507629685007 Y= -2.792217197385433
-// main.js:168 X= 6.482658198426552 Y= 0.3352040893300895
-// main.js:168 X= -4.679349539083869 Y= 2.3859317233074377
-// main.js:168 X= -3.3675988880104306 Y= -3.290377940167526
-// main.js:168 X= -6.501502380810381 Y= 4.223225711784081
+/* ---------- CACHE ORIGINAL TRANSFORMS ---------- */
+uiElements.forEach(el => {
+  if (!el.userData.__baseTransform) {
+    el.userData.__baseTransform = {
+      x: el.position.x,
+      y: el.position.y,
+      z: el.position.z,
+      sx: el.scale.x,
+      sy: el.scale.y,
+      sz: el.scale.z
+    };
+  }
+});
 
+/* ---------- SAFE DEVICE PROFILE ---------- */
+function getSafeProfile() {
+  const w = Math.min(window.innerWidth, window.screen.width);
+  const h = Math.min(window.innerHeight, window.screen.height);
+  const ratio = w / h;
 
+  if (w < 480) return "tiny";
+  if (w < 768) return "mobile";
+  if (w < 1024) return "tablet";
+  if (ratio > 2.1) return "ultrawide";
+  return "desktop";
+}
 
+/* ---------- APPLY RESPONSIVE SCALING ---------- */
+function applySafeResponsiveScaling() {
+  const profile = getSafeProfile();
+  console.log(profile);
+  /* CAMERA — ONLY FOV */
+  camera.fov =
+    profile === "tiny" ? 80 :
+    profile === "mobile" ? 76 :
+    profile === "tablet" ? 74 :
+    profile === "ultrawide" ? 68 : 72;
 
-// X= -3.4355386337975053 Y= 3.311441195185792
-// main.js:168 X= 0.845191074976543 Y= 4.45449480370279
-// main.js:168 X= 2.674786124851572 Y= 2.2276770054092405
-// main.js:168 X= 0.39237096488967604 Y= -0.7532058791256807
-// main.js:168 X= 2.1979776102886266 Y= 3.7402629930733
-// main.js:168 X= -2.783879452884129 Y= -2.8673156040078767
-// main.js:168 X= -4.073084161560644 Y= -1.4377166904080467
-// main.js:168 X= -5.041856094681371 Y= 1.373076236068799
-// main.js:168 X= 4.36282179747442 Y= 0.197460519788898
-// main.js:168 X= -3.514212881647916 Y= 4.087973697964573
+  camera.updateProjectionMatrix();
 
+  /* BLOOM — SAFE */
+  bloomPass.strength =
+    profile === "tiny" ? 0.32 :
+    profile === "mobile" ? 0.38 :
+    profile === "tablet" ? 0.42 :
+    profile === "ultrawide" ? 0.55 : 0.45;
 
+  /* UI ELEMENTS — SCALE ONLY (NO POSITION DAMAGE) */
+  const uiScale =
+    profile === "tiny" ? 0.78 :
+    profile === "mobile" ? 0.85 :
+    profile === "tablet" ? 0.92 :
+    profile === "ultrawide" ? 1.05 : 1;
 
-// X= 5.842776029218738 Y= -0.07086359952106192
-// main.js:168 X= 3.4706628393656724 Y= 2.803552821144858
-// main.js:168 X= -5.672243876941672 Y= -2.0886105792466547
-// main.js:168 X= -6.4087113638709186 Y= -1.0104415987244848
-// main.js:168 X= -3.6573119244498336 Y= 0.8180122759966965
-// main.js:168 X= 5.423519980426892 Y= -1.843851314698758
-// main.js:168 X= 0.811910666307659 Y= 3.2997060540207204
-// main.js:168 X= -4.531060370658029 Y= 2.6882539836284693
-// main.js:168 X= -3.3688985959751263 Y= 3.9218282438548004
-// main.js:168 X= 6.218237219376581 Y= -0.5701949063381605
+  uiElements.forEach(el => {
+    const base = el.userData.__baseTransform;
+    if (!base) return;
+
+    el.position.set(base.x, base.y, base.z); // restore
+    el.scale.set(
+      base.sx * uiScale,
+      base.sy * uiScale,
+      base.sz * uiScale
+    );
+  });
+
+  /* PARTICLES — SIZE ONLY */
+  if (particleSystem) {
+    particleSystem.material.size =
+      profile === "tiny" ? 0.045 :
+      profile === "mobile" ? 0.05 :
+      profile === "tablet" ? 0.055 : 0.06;
+  }
+
+  ScrollTrigger.refresh();
+}
+
+/* ---------- SAFE RESIZE HOOK ---------- */
+let __safeRAF;
+function safeResizeHandler() {
+  cancelAnimationFrame(__safeRAF);
+  __safeRAF = requestAnimationFrame(() => {
+    handleResize();
+    applySafeResponsiveScaling();
+  });
+}
+
+window.addEventListener("resize", safeResizeHandler);
+window.addEventListener("orientationchange", safeResizeHandler);
+
+if (window.visualViewport) {
+  window.visualViewport.addEventListener("resize", safeResizeHandler);
+}
+
+/* ---------- INITIAL APPLY ---------- */
+applySafeResponsiveScaling();
+
+/* ============================================================
+   FRUSTUM WIDTH GUARANTEE FIX (APPEND ONLY)
+   ============================================================ */
+
+function applyFrustumWidthFix() {
+  const aspect = camera.aspect;
+
+  // --- maximum horizontal extent used by your scene ---
+  // wave max (~6.5) + character offset (~7) + safety margin
+  const MAX_SCENE_HALF_WIDTH = 14;
+
+  const vFovRad = THREE.MathUtils.degToRad(camera.fov);
+  const hFovRad = 2 * Math.atan(Math.tan(vFovRad / 2) * aspect);
+
+  // Required Z distance to fit width
+  const requiredZ =
+    MAX_SCENE_HALF_WIDTH / Math.tan(hFovRad / 2);
+
+  // Cache original scroll-based Z once
+  if (!camera.userData.__scrollZOffset) {
+    camera.userData.__scrollZOffset = 0;
+  }
+
+  // Only push camera back if needed
+  const minZ = requiredZ * 0.9;
+  const currentZ = camera.position.z;
+
+  if (Math.abs(currentZ) < minZ) {
+    camera.userData.__scrollZOffset = minZ - Math.abs(currentZ);
+  } else {
+    camera.userData.__scrollZOffset = 0;
+  }
+}
+
+/* ---- APPLY OFFSET SAFELY DURING SCROLL ---- */
+const __origOnUpdate = gsap.getTweensOf(camera.position)[0]?.vars?.onUpdate;
+
+gsap.getTweensOf(camera.position)[0].vars.onUpdate = function () {
+  if (__origOnUpdate) __origOnUpdate();
+
+  if (camera.userData.__scrollZOffset) {
+    camera.position.z -= camera.userData.__scrollZOffset;
+  }
+};
+
+/* ---- APPLY ON RESIZE ---- */
+window.addEventListener("resize", applyFrustumWidthFix);
+if (window.visualViewport) {
+  window.visualViewport.addEventListener("resize", applyFrustumWidthFix);
+}
+
+applyFrustumWidthFix();
+
