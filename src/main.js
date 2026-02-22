@@ -50,7 +50,9 @@ let particleSystem;
 const floatingSymbols = []; 
 const uiElements = []; // Tracks character and text panels to keep them upright
 const clock = new THREE.Clock();
-
+const CORRIDOR_RADIUS = 4.2;      // thickness of tunnel
+const CORRIDOR_LINES = 12;        // number of neon rails
+const CORRIDOR_Y_OFFSET = cameraHeight;
 // ==========================
 // SCENE SETUP (TWO SCENES FOR SELECTIVE GLOW)
 // ==========================
@@ -148,56 +150,71 @@ function generateGradientTexture() {
 // ==========================
 
 function createTunnelVisuals() {
-  const lineCount = 10; 
-  const pointsPerLine = 60;
+  const pointsPerLine = 80;
   const gradientTexture = generateGradientTexture();
 
   const tubeMaterial = new THREE.MeshBasicMaterial({
     map: gradientTexture,
     transparent: true,
-    opacity: 0.8,
+    opacity: 0.85,
     blending: THREE.AdditiveBlending,
     side: THREE.DoubleSide,
     depthWrite: false
   });
 
-  for (let i = 0; i < lineCount; i++) {
+  for (let i = 0; i < CORRIDOR_LINES; i++) {
+    const angle = (i / CORRIDOR_LINES) * Math.PI * 2;
+
+    const offsetX = Math.cos(angle) * CORRIDOR_RADIUS;
+    const offsetY = Math.sin(angle) * CORRIDOR_RADIUS + CORRIDOR_Y_OFFSET;
+
     const points = [];
-    const offsetX = (Math.random() - 0.5) * 14; 
-    const offsetY = (Math.random() - 0.5) * 8 + cameraHeight;
 
     for (let j = 0; j <= pointsPerLine; j++) {
-      const ratio = j / pointsPerLine;
-      const z = deepZ + (ratio * (Math.abs(deepZ - startZ) + 30)) - 10; 
-      const x = getWaveX(z) + offsetX;
-      points.push(new THREE.Vector3(x, offsetY, z));
+      const t = j / pointsPerLine;
+      const z = deepZ + t * (Math.abs(deepZ - startZ) + 30) - 10;
+
+      const waveX = getWaveX(z);
+
+      points.push(
+        new THREE.Vector3(
+          waveX + offsetX,
+          offsetY,
+          z
+        )
+      );
     }
 
     const curve = new THREE.CatmullRomCurve3(points);
-    const geometry = new THREE.TubeGeometry(curve, 100, 0.04, 8, false);
+    const geometry = new THREE.TubeGeometry(curve, 140, 0.045, 10, false);
     const mesh = new THREE.Mesh(geometry, tubeMaterial);
-    glowScene.add(mesh); 
+
+    glowScene.add(mesh);
   }
 
+  // ---------- PARTICLES (UNCHANGED) ----------
   const particleCount = 800;
   const particleGeo = new THREE.BufferGeometry();
   const particlePos = [];
-  const particleData = []; 
+  const particleData = [];
 
   for (let i = 0; i < particleCount; i++) {
     const z = deepZ + Math.random() * (Math.abs(deepZ - startZ) + 20) - 10;
-    const spreadX = (Math.random() - 0.5) * 18;
-    const x = getWaveX(z) + spreadX;
-    const y = (Math.random() - 0.5) * 12 + cameraHeight;
+
+    const angle = Math.random() * Math.PI * 2;
+    const radius = CORRIDOR_RADIUS * Math.random();
+
+    const x = getWaveX(z) + Math.cos(angle) * radius;
+    const y = Math.sin(angle) * radius + cameraHeight;
 
     particlePos.push(x, y, z);
 
     particleData.push({
-        baseX: spreadX, 
-        baseY: y,
-        speedX: 0.1 + Math.random() * 0.5,
-        speedY: 0.1 + Math.random() * 0.5,
-        phase: Math.random() * Math.PI * 2
+      baseX: Math.cos(angle) * radius,
+      baseY: y,
+      speedX: 0.2,
+      speedY: 0.2,
+      phase: Math.random() * Math.PI * 2
     });
   }
 
@@ -206,16 +223,15 @@ function createTunnelVisuals() {
 
   const particleMat = new THREE.PointsMaterial({
     color: 0xffffff,
-    size: 0.07,
+    size: 0.06,
     transparent: true,
-    opacity: 0.7,
+    opacity: 0.6,
     blending: THREE.AdditiveBlending
   });
 
   particleSystem = new THREE.Points(particleGeo, particleMat);
-  glowScene.add(particleSystem); 
+  glowScene.add(particleSystem);
 }
-
 // ==========================
 // DEVELOPER SYNTAX / MATH SYMBOLS 
 // ==========================
@@ -523,3 +539,43 @@ window.addEventListener("resize", handleResize);
 if (window.visualViewport) {
   window.visualViewport.addEventListener("resize", handleResize);
 }
+
+
+//offsetvalue
+// X= 1.7483819715837419 Y= -0.2537957758028814
+// main.js:168 X= 0.37615036034312466 Y= 2.938568163765949
+// main.js:168 X= 4.547051525102319 Y= 3.3807998003225275
+// main.js:168 X= -2.67575738441814 Y= -0.2148295497078211
+// main.js:168 X= -3.6508671319680905 Y= 3.275843443981629
+// main.js:168 X= 5.152507629685007 Y= -2.792217197385433
+// main.js:168 X= 6.482658198426552 Y= 0.3352040893300895
+// main.js:168 X= -4.679349539083869 Y= 2.3859317233074377
+// main.js:168 X= -3.3675988880104306 Y= -3.290377940167526
+// main.js:168 X= -6.501502380810381 Y= 4.223225711784081
+
+
+
+
+// X= -3.4355386337975053 Y= 3.311441195185792
+// main.js:168 X= 0.845191074976543 Y= 4.45449480370279
+// main.js:168 X= 2.674786124851572 Y= 2.2276770054092405
+// main.js:168 X= 0.39237096488967604 Y= -0.7532058791256807
+// main.js:168 X= 2.1979776102886266 Y= 3.7402629930733
+// main.js:168 X= -2.783879452884129 Y= -2.8673156040078767
+// main.js:168 X= -4.073084161560644 Y= -1.4377166904080467
+// main.js:168 X= -5.041856094681371 Y= 1.373076236068799
+// main.js:168 X= 4.36282179747442 Y= 0.197460519788898
+// main.js:168 X= -3.514212881647916 Y= 4.087973697964573
+
+
+
+// X= 5.842776029218738 Y= -0.07086359952106192
+// main.js:168 X= 3.4706628393656724 Y= 2.803552821144858
+// main.js:168 X= -5.672243876941672 Y= -2.0886105792466547
+// main.js:168 X= -6.4087113638709186 Y= -1.0104415987244848
+// main.js:168 X= -3.6573119244498336 Y= 0.8180122759966965
+// main.js:168 X= 5.423519980426892 Y= -1.843851314698758
+// main.js:168 X= 0.811910666307659 Y= 3.2997060540207204
+// main.js:168 X= -4.531060370658029 Y= 2.6882539836284693
+// main.js:168 X= -3.3688985959751263 Y= 3.9218282438548004
+// main.js:168 X= 6.218237219376581 Y= -0.5701949063381605
